@@ -1,0 +1,6 @@
+{
+  "name": "Universal Converter",
+  "description": "A modern, highly interactive, and responsive file conversion web utility with elegant design, premium authentication, admin stats portal, and live-simulated file conversion flows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

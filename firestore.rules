@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. GLOBAL SAFETY NET
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. REUSABLE HARDENED CORE PRIMITIVES
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        || (request.auth.token.email == "asadansari121149@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 3. VALIDATION SYSTEM BLUEPRINTS
+    function isValidUserCreate(data) {
+      return data.keys().hasAll(['uid', 'email', 'plan', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 5
+        && data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256
+        && data.plan is string && (data.plan == 'Free' || data.plan == 'Pro' || data.plan == 'Ultimate')
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isValidUserUpdate(data, prev) {
+      return data.keys().hasAll(['uid', 'email', 'plan', 'createdAt', 'updatedAt'])
+        && data.keys().size() == 5
+        && data.uid == prev.uid
+        && data.createdAt == prev.createdAt
+        && data.email is string && data.email.size() <= 256
+        && data.plan is string && (data.plan == 'Free' || data.plan == 'Pro' || data.plan == 'Ultimate')
+        && data.updatedAt == request.time;
+    }
+
+    function isValidHistoryCreate(data) {
+      return data.keys().hasAll(['id', 'name', 'size', 'type', 'extension', 'targetFormat', 'createdAt'])
+        && data.keys().size() == 7
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 256
+        && data.size is int && data.size >= 0
+        && data.type is string && data.type.size() <= 128
+        && data.extension is string && data.extension.size() <= 32
+        && data.targetFormat is string && data.targetFormat.size() <= 32
+        && data.createdAt == request.time;
+    }
+
+    // 4. ENTITY MATCH BLOCKS
+    
+    // User account master document
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      allow create: if isOwner(userId) 
+        && isValidUserCreate(incoming())
+        // Block self-assigned premium tiers during registration (Privilege Escalation protection)
+        && incoming().plan == 'Free';
+        
+      allow update: if isOwner(userId) 
+        && isValidUserUpdate(incoming(), existing())
+        && (
+          // Standard users can only change email but plans remain immutable to prevent billing bypass
+          (incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']) && incoming().plan == existing().plan)
+          // Admin override
+          || isAdmin()
+        );
+        
+      allow delete: if isAdmin();
+    }
+
+    // User's private historical conversion logs
+    match /users/{userId}/history/{historyId} {
+      allow list, get: if isOwner(userId) || isAdmin();
+      
+      allow create: if isOwner(userId)
+        && isValidId(historyId)
+        && isValidHistoryCreate(incoming());
+        
+      allow update: if isOwner(userId)
+        && isValidId(historyId)
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['targetFormat'])
+          || isAdmin()
+        );
+        
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Admin Access Identification
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if false; // System Only, never writable via standard client handles
+    }
+
+    // Allow collection group query on history for admins
+    match /{anyPath=**}/history/{historyId} {
+      allow read, list: if isAdmin();
+    }
+
+  }
+}
